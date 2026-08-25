@@ -23,4 +23,5 @@ class IncidentResponse(BaseModel):
     service_id: int
     service_name: str
     status: str
+    severity: str
     message: str

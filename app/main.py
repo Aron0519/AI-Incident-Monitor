@@ -94,6 +94,7 @@ async def check_service(service_id: int):
                             "service_id": service["id"],
                             "service_name": service["name"],
                             "status": "open",
+                            "severity": "high",
                             "message": f"Service returned HTTP {response.status_code}"
                         })
 
@@ -112,6 +113,7 @@ async def check_service(service_id: int):
                         "service_id": service["id"],
                         "service_name": service["name"],
                         "status": "open",
+                        "severity": "high",
                         "message": "Service could not be reached"
                     })
 
@@ -122,3 +124,20 @@ async def check_service(service_id: int):
 @app.get("/api/v1/incidents", response_model=list[IncidentResponse])
 def get_incidents():
     return incidents
+
+@app.get("/api/v1/incidents/{incident_id}", response_model=IncidentResponse)
+def get_incident(incident_id: int):
+    for incident in incidents:
+        if incident["id"] == incident_id:
+            return incident
+
+    raise HTTPException(status_code=404, detail="Incident not found")
+
+@app.delete("/api/v1/incidents/{incident_id}")
+def delete_incident(incident_id: int):
+    for incident in incidents:
+        if incident["id"] == incident_id:
+            incidents.remove(incident)
+            return {"message": "Incident deleted successfully"}
+
+    raise HTTPException(status_code=404, detail="Incident not found")
