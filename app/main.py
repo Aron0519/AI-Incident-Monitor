@@ -1,22 +1,39 @@
 from fastapi import FastAPI, HTTPException, Depends
+from contextlib import asynccontextmanager
+import asyncio
 from sqlalchemy.orm import Session
 import httpx
 from app.services import ServiceCreate, ServiceResponse, IncidentResponse
 from app.database import get_db
 from app.models import Service, Incident
+from app.monitor import monitor_services
 
-#temporary in-memory storage for services
-# services = []
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Start automatic service monitoring
+    monitoring_task = asyncio.create_task(monitor_services())
 
-# temporary in-memory storage for incidents
-# incidents = []
+    print("Automatic service monitoring started.")
+
+    yield
+
+    # Stop monitoring when the application shuts down
+    monitoring_task.cancel()
+
+    try:
+        await monitoring_task
+    except asyncio.CancelledError:
+        pass
+
+    print("Automatic service monitoring stopped.")
 
 # app creates our central object representing our backend server
 # app basically creates our FastAPI application
 app = FastAPI(
     title="AI Incident Monitoring Platform",
     description="Backend API for monitoring services and managing incidents.",
-    version="0.1.0"
+    version="0.1.0",
+    lifespan=lifespan 
 )
 
 # When someone sends an HTTP GET request to /, execute the function below.
