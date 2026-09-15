@@ -1,12 +1,15 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
+from sqlalchemy.orm import Session
 import httpx
 from app.services import ServiceCreate, ServiceResponse, IncidentResponse
+from app.database import get_db
+from app.models import Service, Incident
 
 #temporary in-memory storage for services
-services = []
+# services = []
 
 # temporary in-memory storage for incidents
-incidents = []
+# incidents = []
 
 # app creates our central object representing our backend server
 # app basically creates our FastAPI application
@@ -35,109 +38,167 @@ def health_check():
 #the response from this endpoint must follow the ServiceResponse structure defined in services.py.
 # FastAPI expects the request body to follow the structure defined in the service.py 
 @app.post("/api/v1/services", response_model=ServiceResponse)
-def create_service(service: ServiceCreate):
-    new_service = {
-        "id": len(services) + 1,
-        "name": service.name,
-        "url": service.url,
-        "description": service.description,
-        "status": "unknown"
-    }
+def create_service(service: ServiceCreate, db: Session = Depends(get_db)):
+    new_service = Service(
+        name=service.name,
+        url=str(service.url)
+    )
 
-    services.append(new_service)
+    db.add(new_service)
+    db.commit()
+    db.refresh(new_service)
 
     return new_service
 
 @app.get("/api/v1/services", response_model=list[ServiceResponse])
-def get_services():
-    return services
+def get_services(db: Session = Depends(get_db)):
+    return db.query(Service).all()
 
 
 @app.put("/api/v1/services/{service_id}/url")
-def update_service_url(service_id: int, url: str):
-    for service in services:
-        if service["id"] == service_id:
-            service["url"] = url
-            return service
+def update_service_url(
+    service_id: int,
+    url: str,
+    db: Session = Depends(get_db)
+):
+    service = db.query(Service).filter(Service.id == service_id).first()
 
-    raise HTTPException(status_code=404, detail="Service not found")
+    if not service:
+        raise HTTPException(status_code=404, detail="Service not found")
 
-#add the health check endpoint 
+    service.url = url
+
+    db.commit()
+    db.refresh(service)
+
+    return service
+
+# Add the health check endpoint
 @app.post("/api/v1/services/{service_id}/check")
-async def check_service(service_id: int):
-    for service in services:
-        if service["id"] == service_id:
+async def check_service(
+    service_id: int,
+    db: Session = Depends(get_db)
+):
+    # Find the service in the database
+    service = db.query(Service).filter(Service.id == service_id).first()
 
-            try:
-                async with httpx.AsyncClient(timeout=5.0) as client:
-                    response = await client.get(str(service["url"]))
+    # If the service does not exist, return 404
+    if not service:
+        raise HTTPException(
+            status_code=404,
+            detail="Service not found"
+        )
 
-                if response.status_code < 400:
-                    service["status"] = "up"
+    try:
+        # Try to contact the service
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            response = await client.get(service.url)
 
-                    for incident in incidents:
-                        if incident["service_id"] == service["id"] and incident["status"] == "open":
-                            incident["status"] = "resolved"
+        # If the service responds successfully
+        if response.status_code < 400:
+            service.status = "up"
 
+            # Resolve any existing open incidents
+            open_incidents = db.query(Incident).filter(
+                Incident.service_id == service.id,
+                Incident.status == "open"
+            ).all()
+
+            for incident in open_incidents:
+                incident.status = "resolved"
+
+        else:
+            # Service responded, but with an error
+            service.status = "down"
+
+            # Check if an open incident already exists
+            open_incident = db.query(Incident).filter(
+                Incident.service_id == service.id,
+                Incident.status == "open"
+            ).first()
+
+            # Only create a new incident if one is not already open
+            if not open_incident:
+
+                if response.status_code >= 500:
+                    severity = "high"
                 else:
-                    service["status"] = "down"
+                    severity = "medium"
 
-                    open_incident_exists = any(
-                        incident["service_id"] == service["id"]
-                        and incident["status"] == "open"
-                        for incident in incidents
-                    )
-
-                    if not open_incident_exists:
-                        incidents.append({
-                            "id": len(incidents) + 1,
-                            "service_id": service["id"],
-                            "service_name": service["name"],
-                            "status": "open",
-                            "severity": "high",
-                            "message": f"Service returned HTTP {response.status_code}"
-                        })
-
-            except httpx.RequestError:
-                 service["status"] = "down"
-
-                 open_incident_exists = any(
-                    incident["service_id"] == service["id"]
-                    and incident["status"] == "open"
-                    for incident in incidents
+                new_incident = Incident(
+                    service_id=service.id,
+                    status="open",
+                    severity=severity,
+                    message=f"Service returned HTTP {response.status_code}"
                 )
 
-                 if not open_incident_exists:
-                    incidents.append({
-                        "id": len(incidents) + 1,
-                        "service_id": service["id"],
-                        "service_name": service["name"],
-                        "status": "open",
-                        "severity": "high",
-                        "message": "Service could not be reached"
-                    })
+                db.add(new_incident)
 
-            return service
+    except httpx.RequestError:
+        # Service could not be reached
+        service.status = "down"
 
-    raise HTTPException(status_code=404, detail="Service not found")
+        # Check if an open incident already exists
+        open_incident = db.query(Incident).filter(
+            Incident.service_id == service.id,
+            Incident.status == "open"
+        ).first()
+
+        # Only create a new incident if one is not already open
+        if not open_incident:
+            new_incident = Incident(
+                service_id=service.id,
+                status="open",
+                severity="critical",
+                message="Service could not be reached"
+            )
+
+            db.add(new_incident)
+
+    # Save changes to PostgreSQL
+    db.commit()
+    db.refresh(service)
+
+    return {
+        "service_id": service.id,
+        "service_name": service.name,
+        "status": service.status
+    }
 
 @app.get("/api/v1/incidents", response_model=list[IncidentResponse])
-def get_incidents():
-    return incidents
+def get_incidents(db: Session = Depends(get_db)):
+    return db.query(Incident).all()
 
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentResponse)
-def get_incident(incident_id: int):
-    for incident in incidents:
-        if incident["id"] == incident_id:
-            return incident
+def get_incident(
+    incident_id: int,
+    db: Session = Depends(get_db)
+):
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
 
-    raise HTTPException(status_code=404, detail="Incident not found")
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    return incident
+
 
 @app.delete("/api/v1/incidents/{incident_id}")
-def delete_incident(incident_id: int):
-    for incident in incidents:
-        if incident["id"] == incident_id:
-            incidents.remove(incident)
-            return {"message": "Incident deleted successfully"}
+def delete_incident(
+    incident_id: int,
+    db: Session = Depends(get_db)
+):
+    incident = db.query(Incident).filter(Incident.id == incident_id).first()
 
-    raise HTTPException(status_code=404, detail="Incident not found")
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    db.delete(incident)
+    db.commit()
+
+    return {"message": "Incident deleted successfully"}
