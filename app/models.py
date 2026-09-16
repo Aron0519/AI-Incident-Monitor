@@ -1,4 +1,5 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from datetime import datetime
 from sqlalchemy.orm import relationship
 from app.database import Base
 
@@ -23,8 +24,37 @@ class Incident(Base):
     severity = Column(String, nullable=False)
     message = Column(String, nullable=False)
 
-    service = relationship("Service", back_populates="incidents")
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    resolved_at = Column(DateTime, nullable=True)
 
+    service = relationship("Service", back_populates="incidents")
+    events = relationship(
+        "IncidentEvent",
+        back_populates="incident",
+        cascade="all, delete-orphan"
+    )
     @property
     def service_name(self):
         return self.service.name
+
+class IncidentEvent(Base):
+    __tablename__ = "incident_events"
+
+    id = Column(Integer, primary_key=True, index=True)
+    incident_id = Column(
+        Integer,
+        ForeignKey("incidents.id"),
+        nullable=False
+    )
+    event_type = Column(String, nullable=False)
+    message = Column(String, nullable=False)
+    created_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    incident = relationship(
+        "Incident",
+        back_populates="events"
+    )

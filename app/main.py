@@ -3,9 +3,9 @@ from contextlib import asynccontextmanager
 import asyncio
 from sqlalchemy.orm import Session
 import httpx
-from app.services import ServiceCreate, ServiceResponse, IncidentResponse
+from app.services import ServiceCreate, ServiceResponse, IncidentResponse, IncidentEventResponse
 from app.database import get_db
-from app.models import Service, Incident
+from app.models import Service, Incident, IncidentEvent
 from app.monitor import monitor_services
 
 @asynccontextmanager
@@ -124,6 +124,15 @@ async def check_service(
             for incident in open_incidents:
                 incident.status = "resolved"
 
+                # Record that the incident was resolved
+                resolved_event = IncidentEvent(
+                    incident_id=incident.id,
+                    event_type="resolved",
+                    message="Service has recovered"
+                )
+
+                db.add(resolved_event)
+
         else:
             # Service responded, but with an error
             service.status = "down"
@@ -151,6 +160,18 @@ async def check_service(
 
                 db.add(new_incident)
 
+                # Get the new incident's ID
+                db.flush()
+
+                # Record that the incident was created
+                created_event = IncidentEvent(
+                    incident_id=new_incident.id,
+                    event_type="created",
+                    message=f"Incident created: Service returned HTTP {response.status_code}"
+                )
+
+                db.add(created_event)
+
     except httpx.RequestError:
         # Service could not be reached
         service.status = "down"
@@ -171,6 +192,18 @@ async def check_service(
             )
 
             db.add(new_incident)
+
+            # Get the new incident's ID
+            db.flush()
+
+            # Record that the incident was created
+            created_event = IncidentEvent(
+                incident_id=new_incident.id,
+                event_type="created",
+                message="Incident created: Service could not be reached"
+            )
+
+            db.add(created_event)
 
     # Save changes to PostgreSQL
     db.commit()
@@ -219,3 +252,30 @@ def delete_incident(
     db.commit()
 
     return {"message": "Incident deleted successfully"}
+
+
+@app.get(
+    "/api/v1/incidents/{incident_id}/events",
+    response_model=list[IncidentEventResponse]
+)
+def get_incident_events(
+    incident_id: int,
+    db: Session = Depends(get_db)
+):
+    # Make sure the incident exists
+    incident = db.query(Incident).filter(
+        Incident.id == incident_id
+    ).first()
+
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    # Get all events for this incident
+    events = db.query(IncidentEvent).filter(
+        IncidentEvent.incident_id == incident_id
+    ).order_by(IncidentEvent.created_at).all()
+
+    return events

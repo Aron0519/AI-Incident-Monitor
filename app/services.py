@@ -1,3 +1,4 @@
+from datetime import datetime
 from pydantic import BaseModel, HttpUrl
 
 
@@ -25,3 +26,11 @@ class IncidentResponse(BaseModel):
     status: str
     severity: str
     message: str
+
+
+class IncidentEventResponse(BaseModel):
+    id: int
+    incident_id: int
+    event_type: str
+    message: str
+    created_at: datetime

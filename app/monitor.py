@@ -2,7 +2,7 @@ import asyncio
 import httpx
 
 from app.database import get_db
-from app.models import Service, Incident
+from app.models import Service, Incident, IncidentEvent
 
 
 # How often the monitor checks services
@@ -45,6 +45,15 @@ async def check_all_services():
                     for incident in open_incidents:
                         incident.status = "resolved"
 
+                        # Record that the incident was resolved
+                        resolved_event = IncidentEvent(
+                            incident_id=incident.id,
+                            event_type="resolved",
+                            message="Service has recovered"
+                        )
+
+                        db.add(resolved_event)
+
                 else:
                     # Service responded with an error
                     service.status = "down"
@@ -72,6 +81,18 @@ async def check_all_services():
 
                         db.add(new_incident)
 
+                        # Get the new incident's ID
+                        db.flush()
+
+                        # Record that the incident was created
+                        created_event = IncidentEvent(
+                            incident_id=new_incident.id,
+                            event_type="created",
+                            message=f"Incident created: Service returned HTTP {response.status_code}"
+                        )
+
+                        db.add(created_event)
+
             except httpx.RequestError:
                 # Service could not be reached
                 service.status = "down"
@@ -92,6 +113,18 @@ async def check_all_services():
                     )
 
                     db.add(new_incident)
+
+                    # Get the new incident's ID
+                    db.flush()
+
+                    # Record that the incident was created
+                    created_event = IncidentEvent(
+                        incident_id=new_incident.id,
+                        event_type="created",
+                        message="Incident created: Service could not be reached"
+                    )
+
+                    db.add(created_event)
 
         # Save all changes
         db.commit()
