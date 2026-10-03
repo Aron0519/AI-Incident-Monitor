@@ -1,9 +1,21 @@
+import os
+
+from dotenv import load_dotenv
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 
-# connect to PostgreSQL running on my mac using incident monitor databases
-DATABASE_URL = "postgresql://aronmezretab@localhost:5432/incident_monitor"
+# Load environment variables from .env
+load_dotenv()
 
+# Read the PostgreSQL connection string
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is missing. Configure it in your .env file."
+    )
+
+# Create database connection
 engine = create_engine(DATABASE_URL)
 
 SessionLocal = sessionmaker(
@@ -13,6 +25,7 @@ SessionLocal = sessionmaker(
 )
 
 Base = declarative_base()
+
 
 def get_db():
     db = SessionLocal()
