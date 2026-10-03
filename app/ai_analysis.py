@@ -1,5 +1,5 @@
 import os
-
+import json
 from dotenv import load_dotenv
 from openai import OpenAI
 
@@ -36,3 +36,44 @@ Keep the response concise and practical for a software developer.
     )
 
     return response.output_text
+
+def classify_incident(
+    service_name: str,
+    message: str
+) -> dict:
+
+    prompt = f"""
+You are an incident severity classification assistant.
+
+Analyze this incident:
+
+Service: {service_name}
+Incident: {message}
+
+Classify its severity using these levels:
+
+low: Minor issue with minimal impact.
+medium: Degraded functionality.
+high: Major service disruption.
+critical: Complete outage or severe system failure.
+
+Provide:
+1. severity: low, medium, high, or critical
+2. priority: low, medium, high, or urgent
+3. recommended_action: One specific action to investigate
+   or resolve the incident.
+
+Return ONLY a valid JSON object with exactly these keys:
+"severity", "priority", "recommended_action"
+
+Do not include Markdown or additional explanations.
+"""
+
+    response = client.responses.create(
+        model="gpt-5-mini",
+        input=prompt
+    )
+
+    result = json.loads(response.output_text)
+
+    return result

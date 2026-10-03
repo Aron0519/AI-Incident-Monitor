@@ -7,7 +7,7 @@ from app.services import ServiceCreate, ServiceResponse, IncidentResponse, Incid
 from app.database import get_db
 from app.models import Service, Incident, IncidentEvent
 from app.monitor import monitor_services
-from app.ai_analysis import analyze_incident
+from app.ai_analysis import analyze_incident, classify_incident
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -309,4 +309,34 @@ def analyze_incident_with_ai(
     return {
         "incident_id": incident.id,
         "analysis": analysis
+    }
+
+@app.get("/api/v1/incidents/{incident_id}/classify")
+def classify_incident_with_ai(
+    incident_id: int,
+    db: Session = Depends(get_db)
+):
+    # Find the incident in PostgreSQL
+    incident = db.query(Incident).filter(
+        Incident.id == incident_id
+    ).first()
+
+    # Return 404 if the incident doesn't exist
+    if not incident:
+        raise HTTPException(
+            status_code=404,
+            detail="Incident not found"
+        )
+
+    # Ask AI to classify the incident
+    result = classify_incident(
+        service_name=incident.service.name,
+        message=incident.message
+)
+
+    # Return the AI classification
+    return {
+        "incident_id": incident.id,
+        "original_severity": incident.severity,
+        "ai_classification": result
     }
