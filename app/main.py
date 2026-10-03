@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 import httpx
 from app.services import ServiceCreate, ServiceResponse, IncidentResponse, IncidentEventResponse
 from app.database import get_db
-from app.models import Service, Incident, IncidentEvent
+from app.models import Service, Incident, IncidentEvent, Notification
 from app.monitor import monitor_services
 from app.ai_analysis import analyze_incident, classify_incident
 
@@ -339,4 +339,53 @@ def classify_incident_with_ai(
         "incident_id": incident.id,
         "original_severity": incident.severity,
         "ai_classification": result
+    }
+
+@app.get("/api/v1/notifications")
+def get_notifications(db: Session = Depends(get_db)):
+    notifications = (
+        db.query(Notification)
+        .order_by(Notification.created_at.desc())
+        .all()
+    )
+
+    return [
+        {
+            "id": notification.id,
+            "incident_id": notification.incident_id,
+            "message": notification.message,
+            "is_read": notification.is_read,
+            "created_at": notification.created_at
+        }
+        for notification in notifications
+    ]
+
+@app.patch("/api/v1/notifications/{notification_id}/read")
+def mark_notification_as_read(
+    notification_id: int,
+    db: Session = Depends(get_db)
+):
+    # Find the notification
+    notification = db.query(Notification).filter(
+        Notification.id == notification_id
+    ).first()
+
+    # Return an error if it doesn't exist
+    if not notification:
+        raise HTTPException(
+            status_code=404,
+            detail="Notification not found"
+        )
+
+    # Mark the notification as read
+    notification.is_read = True
+
+    # Save the change to PostgreSQL
+    db.commit()
+    db.refresh(notification)
+
+    return {
+        "id": notification.id,
+        "message": notification.message,
+        "is_read": notification.is_read
     }

@@ -2,7 +2,8 @@ import asyncio
 import httpx
 
 from app.database import get_db
-from app.models import Service, Incident, IncidentEvent
+from app.models import Service, Incident, IncidentEvent, Notification
+
 
 
 # How often the monitor checks services
@@ -93,6 +94,18 @@ async def check_all_services():
 
                         db.add(created_event)
 
+                        # Create notification for HTTP errors
+                        notification = Notification(
+                            incident_id=new_incident.id,
+                            message=(
+                                f"{severity.upper()} ALERT: "
+                                f"{service.name} returned HTTP {response.status_code}"
+                            )
+                        )
+
+                        db.add(notification)
+
+
             except httpx.RequestError:
                 # Service could not be reached
                 service.status = "down"
@@ -125,6 +138,18 @@ async def check_all_services():
                     )
 
                     db.add(created_event)
+
+
+                    # Create notification for connection failures
+                    notification = Notification(
+                        incident_id=new_incident.id,
+                        message=(
+                            f"CRITICAL ALERT: "
+                            f"{service.name} could not be reached"
+                        )
+                    )
+
+                    db.add(notification)
 
         # Save all changes
         db.commit()
